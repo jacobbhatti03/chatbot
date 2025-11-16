@@ -46,8 +46,10 @@ def generate_with_gemini(prompt, max_output_tokens=512, temperature=0.6):
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[SYSTEM_PROMPT, prompt],
-            temperature=temperature,
-            max_output_tokens=max_output_tokens
+            generation_config={
+                "temperature": 0.7,
+                "max_output_tokens": 768
+            }
         )
         text = extract_text_from_response(response)
         return text if text else None
