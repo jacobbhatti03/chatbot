@@ -10,10 +10,9 @@ import google.generativeai as genai
 
 # ---- Configure Gemini ----
 # 👇 Add your Gemini API key here or through environment variable
-genai.configure(api_key=os.getenv("AIzaSyB1sLeU4GadFs4Q3P1LkcfJtq2W94yX4as"))
-
-# ---- Initialize model ----
-model = genai.GenerativeModel("gemini-2.5-flash")  # Fast + Free-tier friendly
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")  # Fast + Free-tier friendly
 
 # ---- System Prompt ----
 SYSTEM_PROMPT = """
