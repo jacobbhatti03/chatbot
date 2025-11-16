@@ -1,2 +1,7 @@
-streamlit
-openai
+diffusers
+transformers
+accelerate
+pillow
+gradio
+requests
+google-generativeai
