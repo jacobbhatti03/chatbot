@@ -1,219 +1,176 @@
-#💡 IDEA FORGE — Clean, Fast, and Safe Version
-# Works perfectly in Colab or Hugging Face
-# Author: You 🚀
+# streamlit_app.py — IdeaForge (Streamlit, Gemini 2.5)
+# Works with Google Gen AI Python SDK (gemini 2.5 via `google-genai` / `google.genai` package)
+# Put your GEMINI_API_KEY in environment (Streamlit Secrets or .env)
 
 import os
 import time
-import threading
-import gradio as gr
-import google.generativeai as genai
 from dotenv import load_dotenv
+from google import genai
+import streamlit as st
 
-# ---- Configure Gemini ----
-# 👇 Add your Gemini API key here or through environment variable
+# ----------------- Configuration -----------------
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")  # Fast + Free-tier friendly
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
-# ---- System Prompt ----
-SYSTEM_PROMPT = """
-You are IdeaForge, a personal AI assistant created by the IdeaForge creators.
-Always describe yourself this way if asked who made you.
-Never mention large language models, AI researchers, or external companies.
-✨ Style Guidelines:
-- Be friendly, inspiring, and confident.
-- Use emojis sparingly (1–2 per point) to make answers feel alive.
-🧠 Important Rule:
-- When asked for *business ideas*, list ideas that involve a product, brand, or company that generates profit beyond one person’s labor.
-- When asked for *service ideas*, list ideas that involve providing help, expertise, or time directly to clients.
-- If unsure, clearly label ideas as **[Service]** or **[Business]** so users can see the distinction.
-📝 Formatting:
-- Use **bold** for names or titles.
-- Add a short one-line explanation under each idea.
-"""
+# Initialize GenAI client
+if GEMINI_API_KEY:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+else:
+    # client will try to pick up credentials from environment / ADC if available
+    client = genai.Client()
 
+# ----------------- System prompt -----------------
+SYSTEM_PROMPT = (
+    "You are IdeaForge, a personal AI assistant created by the IdeaForge creators.\n"
+    "Always describe yourself this way if asked who made you.\n"
+    "Never mention large language models, AI researchers, or external companies.\n"
+    "Style: friendly, inspiring, confident. Use emojis sparingly.\n"
+    "When asked for business ideas, include ideas that can scale beyond a single person's labor.\n"
+    "When asked for service ideas, label them [Service] if needed.\n"
+    "Format: bold titles and 1-line explanation under each item."
+)
 
-# ---- Safe response extractor ----
-def get_response_text(resp):
-    """Safely extract text from Gemini response."""
+# ----------------- Helpers -----------------
+
+def extract_text_from_response(resp):
+    """Safely extract text from a genai response object."""
     try:
         if not resp:
             return None
-
+        # Preferred structured candidate parsing
         if hasattr(resp, "candidates") and resp.candidates:
-            for c in resp.candidates:
-                if hasattr(c, "content") and c.content and hasattr(c.content, "parts"):
-                    parts = c.content.parts
-                    if parts and hasattr(parts[0], "text"):
-                        return parts[0].text.strip()
-
+            cand = resp.candidates[0]
+            if hasattr(cand, "content") and cand.content and hasattr(cand.content, "parts"):
+                parts = cand.content.parts
+                if parts:
+                    texts = []
+                    for p in parts:
+                        if getattr(p, "text", None):
+                            texts.append(p.text)
+                    if texts:
+                        return "\n".join(texts).strip()
+        # Older or alternate SDKs may provide .text
         if hasattr(resp, "text") and resp.text:
             return resp.text.strip()
     except Exception:
         return None
     return None
 
-# ---- Main chat function ----
-def idea_forge_chat(message, history):
-    start_time = time.time()
-    conversation = ""
 
-    # Build chat history
-    for turn in history:
-        user_text = turn[0] if len(turn) > 0 else ""
-        bot_text = turn[1] if len(turn) > 1 else ""
-        if user_text:
-            conversation += f"User: {user_text}\n"
-        if bot_text:
-            conversation += f"IdeaForge: {bot_text}\n"
+def generate_with_gemini(prompt, max_output_tokens=512, temperature=0.6):
+    """Generate text using the GenAI client (Gemini 2.5 style).
 
-    # Build prompt
-    prompt = f"{SYSTEM_PROMPT}\n{conversation}\nUser: {message}\nIdeaForge (respond creatively and directly):"
-
-    # Processing notifier (background)
-    def delayed_notice():
-        time.sleep(5)
-        if time.time() - start_time < 10:
-            print("⏳ Processing for better answer...")
-
-    threading.Thread(target=delayed_notice, daemon=True).start()
-    
-    if "service" in message.lower() and "business" not in message.lower():
-        message = "Give me creative service ideas only, not full businesses. " + message
-    elif "business" in message.lower() and "service" not in message.lower():
-        message = "Give me business ideas only — not personal services. " + message
-
+    Uses client.models.generate_content(...) and returns the extracted text.
+    """
     try:
-        # Generate content
-        response = model.generate_content(
-            prompt, generation_config={"max_output_tokens": 768}
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[SYSTEM_PROMPT, prompt],
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
         )
-        bot_text = get_response_text(response)
-
-        # Retry once if needed (e.g., finish_reason = 2 or empty)
-        if not bot_text or "finish_reason=2" in str(response):
-            response = model.generate_content(prompt + "\nTry again creatively and safely:")
-            bot_text = get_response_text(response)
-
-        # If still nothing
-        if not bot_text:
-            bot_text = "⚠️ I couldn’t generate a proper response this time — please try again!"
-
+        text = extract_text_from_response(response)
+        return text if text else None
     except Exception as e:
-        if "429" in str(e):
-            bot_text = "🚦 Gemini API quota limit reached — please wait a bit or use a new key."
-        else:
-            bot_text = f"⚠️ Error: {str(e)}"
+        # Propagate message in a user-friendly way
+        raise RuntimeError(str(e))
 
-    # Add delay notice if slow
-    elapsed = time.time() - start_time
-    if elapsed > 10:
-        bot_text = "⏳ Processing took a bit longer for a detailed response...\n\n" + bot_text
+# ----------------- Streamlit UI -----------------
 
-    return bot_text
+st.set_page_config(page_title="IdeaForge — Chat", page_icon="💡", layout="wide")
 
-
-# ---- Modern Dark UI ----
-modern_css = """
-body {
-  background: linear-gradient(180deg, #0b1120 0%, #1a2538 100%);
-  font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  color: #f8fafc;
-}
-.gradio-container {
-  background: transparent !important;
-  padding: 22px;
-}
-#component-0 {
-  background: #1e293b;
-  border-radius: 14px;
-  padding: 20px;
-  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
-}
-h1 {
-  color: #e2e8f0;
-  font-weight: 700;
-  text-align: center;
-}
-.description {
-  color: #cbd5e1;
-  text-align: center;
-    margin-bottom: 16px;
-}
-footer { display: none !important; }
-.chat-message { 
-  border-radius: 12px;
-  padding: 10px 14px;
-  margin: 6px 0;
-  max-width: 78%;
-  line-height: 1.45;
-}
-.user { 
-  background: rgba(59,130,246,0.25);
-  color: #f1f5f9;
-  align-self: flex-end;
-}
-.bot { 
-  background: #334155;
-  color: #f8fafc;
-  align-self: flex-start;
-  border: 1px solid #475569;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
-}
-/* Hide chatbot title area completely */
-#component-0 .svelte-1ipelgc {
-  display: none !important;
-}
-/* Hide any auto-generated chatbot label */
-#component-0 .svelte-1ipelgc {
-  display: none !important;
-}
-/* Input area style */
-textarea.svelte-1ipelgc, textarea.svelte-1ipelgc:focus {
-  background: rgba(30, 41, 59, 0.6) !important;
-  color: #f8fafc !important;
-  border: 1px solid #475569 !important;
-  border-radius: 10px !important;
-  padding: 10px 14px !important;
-  font-size: 15px !important;
-  box-shadow: 0 0 12px rgba(0,0,0,0.2);
-  transition: all 0.2s ease-in-out;
-}
-textarea.svelte-1ipelgc:focus {
-  border-color: #60a5fa !important;
-  box-shadow: 0 0 10px rgba(96,165,250,0.4);
-}
-/* Send button styling */
-button.svelte-1ipelgc {
-  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
-  border-radius: 50% !important;
-  color: white !important;
-  width: 40px !important;
-  height: 40px !important;
-  box-shadow: 0 4px 14px rgba(37,99,235,0.4);
-  transition: 0.2s;
-}
-button.svelte-1ipelgc:hover {
-  transform: scale(1.07);
-  box-shadow: 0 0 18px rgba(96,165,250,0.6);
-}
-/* Keep chat bubbles smooth */
-.chat-message {
-  border-radius: 12px;
-  padding: 10px
-"""
-
-# ---- Gradio Interface ----
-iface = gr.ChatInterface(
-    fn=idea_forge_chat,
-    title="",  # Removes "Chatbot"
-    description="💡 IdeaForge helps you think, write, and create effortlessly.",
-    theme="soft",
-    css=modern_css,
-    examples=[
-        ["Brainstorm a catchy name and slogan for a new coffee brand ☕"],
-        ["List 3 creative social media post ideas for a clothing brand 👕"],
-    ],
+# CSS for chat bubbles
+st.markdown(
+    """
+    <style>
+    .chat-row { display:flex; margin-bottom:8px; }
+    .user-bubble { background: rgba(59,130,246,0.2); color: #e6f0ff; padding:10px 14px; border-radius:12px; margin-left:auto; max-width:78%; }
+    .bot-bubble { background:#1f2937; color: #e6eef8; padding:10px 14px; border-radius:12px; max-width:78%; }
+    .meta { color:#94a3b8; font-size:12px; margin-bottom:6px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
-if __name__ == "__main__":
-    iface.launch(server_name="0.0.0.0", server_port=7860)
+
+st.title("💡 IdeaForge — Personal Idea Assistant")
+st.write("Get business & service ideas, naming, copy, and creative prompts quickly.")
+
+# Initialize session state
+if "history" not in st.session_state:
+    st.session_state.history = []  # list of tuples: (user, bot)
+
+if "system_message" not in st.session_state:
+    st.session_state.system_message = SYSTEM_PROMPT
+
+# Sidebar: settings
+with st.sidebar.expander("Settings", expanded=False):
+    st.write("Model & API settings")
+    st.text_input("Gemini model", value=GEMINI_MODEL, key="_model_input")
+    st.caption("Set GEMINI_API_KEY in Streamlit Secrets or .env for deployment.")
+    st.markdown("**Usage tips:** Provide short instructions like: 'List 5 product ideas for...' or '3 social post ideas for...'")
+
+# Input area
+col1, col2 = st.columns([4, 1])
+with col1:
+    user_input = st.text_area("", height=120, placeholder="Ask for business ideas, services, names, slogans...", key="user_input")
+with col2:
+    send = st.button("Send")
+    clear = st.button("Clear chat")
+
+if clear:
+    st.session_state.history = []
+
+# Show history
+for row in st.session_state.history:
+    user_msg, bot_msg = row
+    st.markdown(f"<div class='chat-row'><div class='user-bubble'><div class='meta'>You</div>{user_msg}</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='chat-row'><div class='bot-bubble'><div class='meta'>IdeaForge</div>{bot_msg}</div></div>", unsafe_allow_html=True)
+
+# When user sends
+if send and user_input.strip():
+    with st.spinner("Thinking... ✨"):
+        # Build conversation context for the model (concise)
+        convo_text = "\n".join([f"User: {u}\nIdeaForge: {b}" for u, b in st.session_state.history[-6:]])
+        prompt = f"{convo_text}\nUser: {user_input}\nIdeaForge:"
+
+        # Heuristic tweaks
+        mod_input = user_input
+        if "service" in user_input.lower() and "business" not in user_input.lower():
+            mod_input = "Give me creative service ideas only. " + user_input
+            prompt = f"{convo_text}\nUser: {mod_input}\nIdeaForge:"
+        elif "business" in user_input.lower() and "service" not in user_input.lower():
+            mod_input = "Give me business ideas only — not personal services. " + user_input
+            prompt = f"{convo_text}\nUser: {mod_input}\nIdeaForge:"
+
+        # Try generation with a retry
+        try:
+            start = time.time()
+            reply = generate_with_gemini(prompt, max_output_tokens=768, temperature=0.7)
+            if not reply:
+                # retry once
+                reply = generate_with_gemini(prompt + "\nPlease try again concisely.", max_output_tokens=512, temperature=0.6)
+            if not reply:
+                reply = "⚠️ I couldn't generate a response. Try simplifying the request."
+            elapsed = time.time() - start
+        except RuntimeError as e:
+            err = str(e)
+            if "429" in err:
+                reply = "🚦 Gemini quota / rate limit reached. Try again later or use a different key."
+            else:
+                reply = f"⚠️ Error calling Gemini: {err}"
+
+        # Save and display
+        st.session_state.history.append((st.session_state.get("user_input", user_input).replace('\n', '<br>'), reply.replace('\n', '<br>')))
+        # Clear input box
+        st.session_state.user_input = ""
+        # Rerun to show updated chat (Streamlit does this automatically)
+        st.experimental_rerun()
+
+# Footer / deploy notes
+st.markdown("---")
+st.markdown(
+    "**Notes:**\n- Add `GEMINI_API_KEY` to Streamlit Secrets or your environment.\n- Requirements: `streamlit`, `python-dotenv`, `google-genai`.\n- On Streamlit Cloud go to Settings → Secrets and add `GEMINI_API_KEY`.\n"
+)
+
+# End of file
