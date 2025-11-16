@@ -1,8 +1,4 @@
-diffusers
-transformers
-accelerate
-pillow
-gradio
-requests
-google-generativeai
+streamlit
 python-dotenv
+google-genai
+
