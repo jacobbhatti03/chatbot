@@ -1,6 +1,5 @@
 # streamlit_app.py — IdeaForge (Streamlit, Gemini 2.5)
-# Works with Google Gen AI Python SDK (gemini 2.5 via `google-genai` / `google.genai` package)
-# Put your GEMINI_API_KEY in environment (Streamlit Secrets or .env)
+# Fully rewritten, session_state safe, no experimental_rerun
 
 import os
 import time
@@ -12,13 +11,7 @@ import streamlit as st
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-
-# Initialize GenAI client
-if GEMINI_API_KEY:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-else:
-    # client will try to pick up credentials from environment / ADC if available
-    client = genai.Client()
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else genai.Client()
 
 # ----------------- System prompt -----------------
 SYSTEM_PROMPT = (
@@ -34,23 +27,16 @@ SYSTEM_PROMPT = (
 # ----------------- Helpers -----------------
 
 def extract_text_from_response(resp):
-    """Safely extract text from a genai response object."""
     try:
         if not resp:
             return None
-        # Preferred structured candidate parsing
         if hasattr(resp, "candidates") and resp.candidates:
             cand = resp.candidates[0]
             if hasattr(cand, "content") and cand.content and hasattr(cand.content, "parts"):
                 parts = cand.content.parts
-                if parts:
-                    texts = []
-                    for p in parts:
-                        if getattr(p, "text", None):
-                            texts.append(p.text)
-                    if texts:
-                        return "\n".join(texts).strip()
-        # Older or alternate SDKs may provide .text
+                texts = [p.text for p in parts if getattr(p, "text", None)]
+                if texts:
+                    return "\n".join(texts).strip()
         if hasattr(resp, "text") and resp.text:
             return resp.text.strip()
     except Exception:
@@ -59,21 +45,16 @@ def extract_text_from_response(resp):
 
 
 def generate_with_gemini(prompt, max_output_tokens=512, temperature=0.6):
-    """Generate text using the GenAI client (Gemini 2.5 style).
-
-    Uses client.models.generate_content(...) and returns the extracted text.
-    """
     try:
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[SYSTEM_PROMPT, prompt],
             temperature=temperature,
-            max_output_tokens=max_output_tokens,
+            max_output_tokens=max_output_tokens
         )
         text = extract_text_from_response(response)
         return text if text else None
     except Exception as e:
-        # Propagate message in a user-friendly way
         raise RuntimeError(str(e))
 
 # ----------------- Streamlit UI -----------------
@@ -90,30 +71,32 @@ st.markdown(
     .meta { color:#94a3b8; font-size:12px; margin-bottom:6px; }
     </style>
     """,
-    unsafe_allow_html=True,
+    unsafe_allow_html=True
 )
 
 st.title("💡 IdeaForge — Personal Idea Assistant")
 st.write("Get business & service ideas, naming, copy, and creative prompts quickly.")
 
-# Initialize session state
+# ----------------- Session State -----------------
 if "history" not in st.session_state:
-    st.session_state.history = []  # list of tuples: (user, bot)
+    st.session_state.history = []
+if "user_input" not in st.session_state:
+    st.session_state.user_input = ""
+if "reply_ready" not in st.session_state:
+    st.session_state.reply_ready = False
+if "current_reply" not in st.session_state:
+    st.session_state.current_reply = ""
 
-if "system_message" not in st.session_state:
-    st.session_state.system_message = SYSTEM_PROMPT
-
-# Sidebar: settings
+# ----------------- Sidebar -----------------
 with st.sidebar.expander("Settings", expanded=False):
-    st.write("Model & API settings")
     st.text_input("Gemini model", value=GEMINI_MODEL, key="_model_input")
     st.caption("Set GEMINI_API_KEY in Streamlit Secrets or .env for deployment.")
-    st.markdown("**Usage tips:** Provide short instructions like: 'List 5 product ideas for...' or '3 social post ideas for...'")
+    st.markdown("**Usage tips:** Short instructions like 'List 5 product ideas for...' or '3 social post ideas for...'\n")
 
-# Input area
-col1, col2 = st.columns([4, 1])
+# ----------------- Input Area -----------------
+col1, col2 = st.columns([4,1])
 with col1:
-    user_input = st.text_area("", height=120, placeholder="Ask for business ideas, services, names, slogans...", key="user_input")
+    st.text_area("", height=120, placeholder="Ask for business ideas, services, names, slogans...", key="user_input")
 with col2:
     send = st.button("Send")
     clear = st.button("Clear chat")
@@ -121,38 +104,33 @@ with col2:
 if clear:
     st.session_state.history = []
 
-# Show history
-for row in st.session_state.history:
-    user_msg, bot_msg = row
+# ----------------- Display History -----------------
+for user_msg, bot_msg in st.session_state.history:
     st.markdown(f"<div class='chat-row'><div class='user-bubble'><div class='meta'>You</div>{user_msg}</div></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='chat-row'><div class='bot-bubble'><div class='meta'>IdeaForge</div>{bot_msg}</div></div>", unsafe_allow_html=True)
 
-# When user sends
-if send and user_input.strip():
+# ----------------- Generate Reply -----------------
+if send and st.session_state.user_input.strip() and not st.session_state.reply_ready:
+    st.session_state.reply_ready = True
     with st.spinner("Thinking... ✨"):
-        # Build conversation context for the model (concise)
         convo_text = "\n".join([f"User: {u}\nIdeaForge: {b}" for u, b in st.session_state.history[-6:]])
-        prompt = f"{convo_text}\nUser: {user_input}\nIdeaForge:"
+        prompt = f"{convo_text}\nUser: {st.session_state.user_input}\nIdeaForge:"
 
         # Heuristic tweaks
-        mod_input = user_input
-        if "service" in user_input.lower() and "business" not in user_input.lower():
-            mod_input = "Give me creative service ideas only. " + user_input
-            prompt = f"{convo_text}\nUser: {mod_input}\nIdeaForge:"
-        elif "business" in user_input.lower() and "service" not in user_input.lower():
-            mod_input = "Give me business ideas only — not personal services. " + user_input
-            prompt = f"{convo_text}\nUser: {mod_input}\nIdeaForge:"
+        user_text = st.session_state.user_input
+        if "service" in user_text.lower() and "business" not in user_text.lower():
+            user_text = "Give me creative service ideas only. " + user_text
+        elif "business" in user_text.lower() and "service" not in user_text.lower():
+            user_text = "Give me business ideas only — not personal services. " + user_text
+        prompt = f"{convo_text}\nUser: {user_text}\nIdeaForge:"
 
-        # Try generation with a retry
+        # Generate response
         try:
-            start = time.time()
             reply = generate_with_gemini(prompt, max_output_tokens=768, temperature=0.7)
             if not reply:
-                # retry once
                 reply = generate_with_gemini(prompt + "\nPlease try again concisely.", max_output_tokens=512, temperature=0.6)
             if not reply:
                 reply = "⚠️ I couldn't generate a response. Try simplifying the request."
-            elapsed = time.time() - start
         except RuntimeError as e:
             err = str(e)
             if "429" in err:
@@ -160,17 +138,17 @@ if send and user_input.strip():
             else:
                 reply = f"⚠️ Error calling Gemini: {err}"
 
-        # Save and display
-        st.session_state.history.append((st.session_state.get("user_input", user_input).replace('\n', '<br>'), reply.replace('\n', '<br>')))
-        # Clear input box
-        st.session_state.user_input = ""
-        # Rerun to show updated chat (Streamlit does this automatically)
-        st.experimental_rerun()
+        st.session_state.current_reply = reply
 
-# Footer / deploy notes
+# ----------------- Display New Reply -----------------
+if st.session_state.reply_ready and st.session_state.current_reply:
+    st.session_state.history.append((st.session_state.user_input.replace('\n','<br>'), st.session_state.current_reply.replace('\n','<br>')))
+    st.session_state.user_input = ""
+    st.session_state.current_reply = ""
+    st.session_state.reply_ready = False
+
+# ----------------- Footer -----------------
 st.markdown("---")
 st.markdown(
-    "**Notes:**\n- Add `GEMINI_API_KEY` to Streamlit Secrets or your environment.\n- Requirements: `streamlit`, `python-dotenv`, `google-genai`.\n- On Streamlit Cloud go to Settings → Secrets and add `GEMINI_API_KEY`.\n"
+    "**Notes:**\n- Add `GEMINI_API_KEY` to Streamlit Secrets or environment.\n- Requirements: `streamlit`, `python-dotenv`, `google-genai`.\n- On Streamlit Cloud: Settings → Secrets → add `GEMINI_API_KEY`."
 )
-
-# End of file
