@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 from google import genai
 import streamlit as st
+from google.genai import types
 
 # ----------------- Configuration -----------------
 load_dotenv()
@@ -43,16 +44,18 @@ def extract_text_from_response(resp):
 
 def generate_with_gemini(prompt, max_output_tokens=512, temperature=0.6):
     try:
+        config = types.GenerateContentConfig(
+            max_output_tokens = max_output_tokens,
+            temperature = float(temperature)
+        )
         response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[SYSTEM_PROMPT, prompt],
-            generation_config={
-                "temperature": 0.7,
-                "max_output_tokens": 768
-            }
+            model = GEMINI_MODEL,
+            contents = [SYSTEM_PROMPT, prompt],
+            config = config
         )
         text = extract_text_from_response(response)
         return text if text else None
+
     except Exception as e:
         raise RuntimeError(str(e))
 
