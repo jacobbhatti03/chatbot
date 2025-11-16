@@ -5,3 +5,4 @@ pillow
 gradio
 requests
 google-generativeai
+python-dotenv
