@@ -1,4 +1,4 @@
- 💡 IDEA FORGE — Clean, Fast, and Safe Version
+#💡 IDEA FORGE — Clean, Fast, and Safe Version
 # Works perfectly in Colab or Hugging Face
 # Author: You 🚀
 
