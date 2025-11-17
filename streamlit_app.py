@@ -128,5 +128,5 @@ for user_msg, bot_msg in st.session_state.history:
 # ----------------- Footer -----------------
 st.markdown("---")
 st.markdown(
-    "**Notes:**\n- Add `GEMINI_API_KEY` to Streamlit Secrets or environment.\n- Requirements: `streamlit`, `python-dotenv`, `google-genai`.\n- On Streamlit Cloud: Settings → Secrets → add `GEMINI_API_KEY`."
+    "**Notes:**"
 )
