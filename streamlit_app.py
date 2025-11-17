@@ -128,5 +128,5 @@ for user_msg, bot_msg in st.session_state.history:
 # ----------------- Footer -----------------
 st.markdown("---")
 st.markdown(
-    "**Notes:**"
+    "****"
 )
